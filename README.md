@@ -77,17 +77,3 @@ Tile Dimensions: Adjust tileSize (1m), wallHeight (2.5m), wallThickness (0.3m), 
 Colors: Update wallMaterials (e.g., 0x888888 for North), cubeMaterial, doorMaterial, or windowMaterial.
 2D Canvas: Change tilePixelSize bounds (min 10, max 30) for 2D grid scaling.
 3D Controls: Modify moveSpeed (0.1), zoomSpeed (0.2), controls.dampingFactor (0.15), or controls.maxDistance.
-
-Troubleshooting
-
-Floor Extends Beyond Grid: Ensure floorGeometry uses new THREE.PlaneGeometry(width * tileSize, height * tileSize) in update3DModel. Check console (F12) for geometry errors. Test with a 5×5 grid.
-Floor Not Visible from Underside: Verify floorMaterial.side = THREE.DoubleSide. Rotate camera below y=0 using mouse/touch or WASD.
-WebGL Errors: Confirm browser supports WebGL and CDNs are accessible. Use Chrome/Firefox.
-Responsive Issues: On mobile, ensure toggle button switches views. Test 2D canvas at 320px (~160px for 10×10).
-Animation Lag: Reduce tilePixelSize max (e.g., to 20) or test in Chrome/Firefox.
-Button Issues: Verify “Rotate Wall” button scales (scale-105) and turns blue (bg-blue-600) in ~150ms.
-
-License
-This project is licensed under the MIT License - see the LICENSE file for details.
-Contact
-For feedback, issues, or contributions, open an issue on GitHub or contact your-email@example.com.
