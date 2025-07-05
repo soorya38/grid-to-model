@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Floor Plan Editor</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    <style>
+        body { margin: 0; display: flex; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
+        #editor { width: 100%; max-width: 320px; padding: 16px; background: #f9fafb; border-right: 1px solid #e5e7eb; overflow-y: auto; }
+        #renderer { flex: 1; display: block; }
+        canvas { display: block; width: 100%; height: auto; }
+        .tile-button, .control-button { transition: all 0.15s ease-in-out; }
+        .tile-button:hover, .control-button:hover { transform: scale(1.05); }
+        .tile-button.active, .control-button.active { background: #2563eb; color: #fff; transform: scale(1.05); }
+        #floorPlanCanvas { background: #ffffff; border: 1px solid #e5e7eb; }
+        .status-bar { font-size: 0.875rem; color: #4b5563; }
+        .hover-tile { fill: rgba(59, 130, 246, 0.2); stroke: #3b82f6; stroke-width: 2; }
+        .selected-tile { stroke: #3b82f6; stroke-width: 3; }
+        .tooltip { position: absolute; background: #1f2937; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; pointer-events: none; z-index: 10; }
+        .loading { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        @media (max-width: 768px) {
+            #editor { max-width: 100%; }
+            #renderer { display: none; }
+            .show-renderer #editor { display: none; }
+            .show-renderer #renderer { display: block; }
+        }
+    </style>
+</head>
+<body>
+    <div id="editor" class="relative">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Floor Plan Editor</h2>
+        <button id="toggleViewBtn" class="control-button bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm mb-4 md:hidden" title="Toggle between 2D editor and 3D view">
+            <i class="fas fa-eye mr-2"></i>Show 3D View
+        </button>
+        <canvas id="floorPlanCanvas" class="mb-4"></canvas>
+        <div class="mb-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-2">Grid Settings</h3>
+            <div class="flex items-center mb-2">
+                <label for="gridWidth" class="text-sm text-gray-600 mr-2">Width:</label>
+                <input type="number" id="gridWidth" min="1" max="100" value="10" class="border rounded-md p-1 w-20 text-sm" title="Grid width (1-100)">
+            </div>
+            <div class="flex items-center mb-2">
+                <label for="gridHeight" class="text-sm text-gray-600 mr-2">Height:</label>
+                <input type="number" id="gridHeight" min="1" max="100" value="10" class="border rounded-md p-1 w-20 text-sm" title="Grid height (1-100)">
+            </div>
+            <button id="setGridBtn" class="control-button bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm disabled:bg-gray-400" title="Apply new grid size">
+                <i class="fas fa-th mr-2"></i>Set Grid Size
+            </button>
+            <button id="resetGridBtn" class="control-button bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm mt-2" title="Reset to default 10x10 grid">
+                <i class="fas fa-undo mr-2"></i>Reset Grid
+            </button>
+        </div>
+        <div class="mb-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-2">Tools</h3>
+            <div class="grid grid-cols-2 gap-2">
+                <button id="wallBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 active:bg-blue-600 active:text-white text-sm" title="Place or edit walls (click, drag, or tap)">
+                    <i class="fas fa-border-all mr-2"></i>Wall (#)
+                </button>
+                <button id="doorBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Place doors (click, drag, or tap)">
+                    <i class="fas fa-door-open mr-2"></i>Door (d)
+                </button>
+                <button id="windowBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Place windows (click, drag, or tap)">
+                    <i class="fas fa-window-maximize mr-2"></i>Window (w)
+                </button>
+                <button id="emptyBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Clear tiles (click, drag, or tap)">
+                    <i class="fas fa-eraser mr-2"></i>Empty ( )
+                </button>
+                <button id="cubeBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Place corner cubes (requires 2+ adjacent walls, click, drag, or tap)">
+                    <i class="fas fa-cube mr-2"></i>Corner Cube (c)
+                </button>
+                <button id="directionBtn" class="tile-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Change wall direction (click, drag, or tap)">
+                    <i class="fas fa-compass mr-2"></i>Change Direction
+                </button>
+            </div>
+            <select id="orientationSelect" class="border rounded-md p-2 mt-2 w-full text-sm hidden" title="Select wall direction">
+                <option value="0">North (0°)</option>
+                <option value="90">East (90°)</option>
+                <option value="180">South (180°)</option>
+                <option value="270">West (270°)</option>
+            </select>
+        </div>
+        <div class="mb-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-2">3D Controls</h3>
+            <div class="grid grid-cols-2 gap-2">
+                <button id="resetCameraBtn" class="control-button bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm" title="Reset camera to top-down view">
+                    <i class="fas fa-redo mr-2"></i>Reset Camera
+                </button>
+                <button id="autoRotateBtn" class="control-button bg-gray-100 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-200 text-sm" title="Toggle auto-rotate for 3D view">
+                    <i class="fas fa-sync-alt mr-2"></i>Auto-Rotate
+                </button>
+            </div>
+            <p class="text-xs text-gray-600 mt-2" title="Use mouse or touch to rotate/pan/zoom, WASD or arrow keys to pan, Q/E or +/- to zoom">Controls: Mouse/Touch (rotate, pan, zoom), WASD/Arrow keys (move), Q/E or +/- (zoom)</p>
+        </div>
+        <div class="status-bar">
+            <p>Grid: <span id="gridSize">10x10</span> | Selected: <span id="selectedTool">Wall</span></p>
+        </div>
+        <div id="loading" class="loading">
+            <i class="fas fa-spinner fa-spin text-blue-600 text-2xl"></i>
+        </div>
+    </div>
+    <div id="renderer" class="h-screen"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Initialize Three.js scene
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, (window.innerWidth - 320) / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth - 320, window.innerHeight);
+        const rendererDiv = document.getElementById('renderer');
+        if (!rendererDiv) {
+            console.error("Renderer div not found!");
+        } else {
+            rendererDiv.appendChild(renderer.domElement);
+        }
+
+        // Add OrbitControls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.15;
+        controls.rotateSpeed = 0.5;
+        controls.panSpeed = 0.5;
+        controls.zoomSpeed = 0.8;
+        controls.minDistance = 2;
+        controls.maxDistance = Math.max(50, Math.max(10, 10) * 2);
+        controls.autoRotate = false;
+        controls.autoRotateSpeed = 3.0;
+
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(10, 10, 10);
+        scene.add(directionalLight);
+
+        // Dimensions and settings
+        const tileSize = 1;
+        const wallHeight = 2.5;
+        const wallThickness = 0.3;
+        const cubeSize = 1.0;
+        const doorHeight = 2;
+        const windowHeight = 1;
+        const windowOffset = 1;
+        let tilePixelSize = 20;
+
+        // Materials
+        const wallMaterials = {
+            0: new THREE.MeshStandardMaterial({ color: 0x888888 }), // North: Gray
+            90: new THREE.MeshStandardMaterial({ color: 0xFF9999 }), // East: Light Red
+            180: new THREE.MeshStandardMaterial({ color: 0x9999FF }), // South: Light Blue
+            270: new THREE.MeshStandardMaterial({ color: 0x99FF99 }) // West: Light Green
+        };
+        const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFF00 });
+        const doorMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+        const windowMaterial = new THREE.MeshStandardMaterial({ color: 0x00B7EB, transparent: true, opacity: 0.6 });
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xDDDDDD, side: THREE.DoubleSide });
+
+        // Cached geometries
+        const wallGeometry = new THREE.BoxGeometry(tileSize, wallHeight, wallThickness);
+        const doorGeometry = new THREE.BoxGeometry(tileSize, doorHeight, wallThickness);
+        const windowGeometry = new THREE.BoxGeometry(tileSize, windowHeight, wallThickness);
+        const cubeGeometry = new THREE.BoxGeometry(cubeSize, wallHeight, cubeSize);
+
+        // Initialize grid size
+        let width = 10;
+        let height = 10;
+        let floorPlan = initializeFloorPlan(width, height);
+        let lastClickedTile = null;
+        let isDragging = false;
+
+        // Camera movement variables
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let zoomIn = false;
+        let zoomOut = false;
+        const moveSpeed = 0.1;
+        const zoomSpeed = 0.2;
+
+        // 2D editor setup
+        const canvas = document.getElementById('floorPlanCanvas');
+        if (!canvas) {
+            console.error("Canvas element not found!");
+        }
+        const ctx = canvas ? canvas.getContext('2d') : null;
+
+        // DOM elements
+        const gridWidthInput = document.getElementById('gridWidth');
+        const gridHeightInput = document.getElementById('gridHeight');
+        const setGridBtn = document.getElementById('setGridBtn');
+        const resetGridBtn = document.getElementById('resetGridBtn');
+        const resetCameraBtn = document.getElementById('resetCameraBtn');
+        const autoRotateBtn = document.getElementById('autoRotateBtn');
+        const toggleViewBtn = document.getElementById('toggleViewBtn');
+        const orientationSelect = document.getElementById('orientationSelect');
+        const gridSizeDisplay = document.getElementById('gridSize');
+        const selectedToolDisplay = document.getElementById('selectedTool');
+        const loading = document.getElementById('loading');
+
+        // Validate DOM elements
+        if (!gridWidthInput || !gridHeightInput || !setGridBtn || !resetGridBtn || !resetCameraBtn || !autoRotateBtn || !toggleViewBtn || !orientationSelect || !gridSizeDisplay || !selectedToolDisplay || !loading) {
+            console.error("One or more DOM elements not found!");
+        }
+
+        // Tile type and direction change mode
+        let selectedTile = '#';
+        let isDirectionMode = false;
+        let selectedOrientation = 0;
+        const buttons = {
+            '#': document.getElementById('wallBtn'),
+            'd': document.getElementById('doorBtn'),
+            'w': document.getElementById('windowBtn'),
+            ' ': document.getElementById('emptyBtn'),
+            'c': document.getElementById('cubeBtn'),
+            'direction': document.getElementById('directionBtn')
+        };
+
+        // Initialize tooltips
+        const tooltip = document.createElement('div');
+        tooltip.className = 'tooltip';
+        document.body.appendChild(tooltip);
+        document.querySelectorAll('[title]').forEach(el => {
+            el.addEventListener('mouseenter', (e) => {
+                tooltip.textContent = el.title;
+                tooltip.style.left = `${e.clientX + 10}px`;
+                tooltip.style.top = `${e.clientY + 10}px`;
+                tooltip.style.display = 'block';
+            });
+            el.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+            el.addEventListener('mousemove', (e) => {
+                tooltip.style.left = `${e.clientX + 10}px`;
+                tooltip.style.top = `${e.clientY + 10}px`;
+            });
+            el.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                tooltip.textContent = el.title;
+                const touch = e.touches[0];
+                tooltip.style.left = `${touch.clientX + 10}px`;
+                tooltip.style.top = `${touch.clientY + 10}px`;
+                tooltip.style.display = 'block';
+            });
+            el.addEventListener('touchend', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+
+        // Button event listeners
+        Object.keys(buttons).forEach(key => {
+            if (buttons[key]) {
+                buttons[key].addEventListener('click', () => {
+                    if (key === 'direction') {
+                        isDirectionMode = true;
+                        Object.values(buttons).forEach(btn => btn.classList.remove('active', 'bg-blue-600', 'text-white'));
+                        buttons[key].classList.add('active', 'bg-blue-600', 'text-white');
+                        orientationSelect.classList.remove('hidden');
+                        selectedToolDisplay.textContent = 'Direction';
+                    } else {
+                        isDirectionMode = false;
+                        selectedTile = key;
+                        Object.values(buttons).forEach(btn => btn.classList.remove('active', 'bg-blue-600', 'text-white'));
+                        buttons[key].classList.add('active', 'bg-blue-600', 'text-white');
+                        orientationSelect.classList.toggle('hidden', key !== '#');
+                        selectedToolDisplay.textContent = key === '#' ? 'Wall' : key === 'd' ? 'Door' : key === 'w' ? 'Window' : key === 'c' ? 'Corner Cube' : 'Empty';
+                    }
+                });
+            }
+        });
+
+        if (orientationSelect) {
+            orientationSelect.addEventListener('change', () => {
+                selectedOrientation = parseInt(orientationSelect.value);
+            });
+        }
+
+        // Toggle view for mobile
+        let is3DView = false;
+        if (toggleViewBtn) {
+            toggleViewBtn.addEventListener('click', () => {
+                is3DView = !is3DView;
+                document.body.classList.toggle('show-renderer', is3DView);
+                toggleViewBtn.innerHTML = `<i class="fas fa-eye mr-2"></i>${is3DView ? 'Show 2D Editor' : 'Show 3D View'}`;
+                updateCanvasSize();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        // 3D control buttons
+        if (resetCameraBtn) {
+            resetCameraBtn.addEventListener('click', () => {
+                camera.position.set(width * tileSize / 2, Math.max(5, Math.max(width, height)), height * tileSize + Math.max(5, Math.max(width, height)));
+                camera.lookAt(width * tileSize / 2, 0, height * tileSize / 2);
+                controls.target.set(width * tileSize / 2, 0, height * tileSize / 2);
+                controls.update();
+            });
+        }
+
+        if (autoRotateBtn) {
+            autoRotateBtn.addEventListener('click', () => {
+                controls.autoRotate = !controls.autoRotate;
+                autoRotateBtn.classList.toggle('active', controls.autoRotate);
+                autoRotateBtn.classList.toggle('bg-blue-600', controls.autoRotate);
+                autoRotateBtn.classList.toggle('text-white', controls.autoRotate);
+            });
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (event) => {
+            switch (event.key) {
+                case 'w': case 'ArrowUp': moveForward = true; break;
+                case 's': case 'ArrowDown': moveBackward = true; break;
+                case 'a': case 'ArrowLeft': moveLeft = true; break;
+                case 'd': case 'ArrowRight': moveRight = true; break;
+                case 'q': case '+': zoomIn = true; break;
+                case 'e': case '-': zoomOut = true; break;
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            switch (event.key) {
+                case 'w': case 'ArrowUp': moveForward = false; break;
+                case 's': case 'ArrowDown': moveBackward = false; break;
+                case 'a': case 'ArrowLeft': moveLeft = false; break;
+                case 'd': case 'ArrowRight': moveRight = false; break;
+                case 'q': case '+': zoomIn = false; break;
+                case 'e': case '-': zoomOut = false; break;
+            }
+        });
+
+        // Grid size input validation
+        function validateInputs() {
+            if (!gridWidthInput || !gridHeightInput || !setGridBtn) return;
+            const newWidth = parseInt(gridWidthInput.value);
+            const newHeight = parseInt(gridHeightInput.value);
+            setGridBtn.disabled = !(newWidth >= 1 && newWidth <= 100 && newHeight >= 1 && newHeight <= 100);
+        }
+
+        if (gridWidthInput) gridWidthInput.addEventListener('input', validateInputs);
+        if (gridHeightInput) gridHeightInput.addEventListener('input', validateInputs);
+
+        // Update canvas size responsively
+        function updateCanvasSize() {
+            if (!canvas || !ctx) return;
+            const editorWidth = Math.min(window.innerWidth, 320);
+            tilePixelSize = Math.max(10, Math.min(30, Math.floor(editorWidth / Math.max(width, height))));
+            canvas.width = width * tilePixelSize;
+            canvas.height = height * tilePixelSize;
+            drawFloorPlan();
+        }
+
+        if (setGridBtn) {
+            setGridBtn.addEventListener('click', () => {
+                const newWidth = parseInt(gridWidthInput.value);
+                const newHeight = parseInt(gridHeightInput.value);
+                if (newWidth >= 1 && newWidth <= 100 && newHeight >= 1 && newHeight <= 100) {
+                    loading.style.display = 'block';
+                    setTimeout(() => {
+                        width = newWidth;
+                        height = newHeight;
+                        floorPlan = initializeFloorPlan(width, height);
+                        updateCanvasSize();
+                        gridSizeDisplay.textContent = `${width}x${height}`;
+                        drawFloorPlan();
+                        update3DModel();
+                        camera.position.set(width * tileSize / 2, Math.max(5, Math.max(width, height)), height * tileSize + Math.max(5, Math.max(width, height)));
+                        camera.lookAt(width * tileSize / 2, 0, height * tileSize / 2);
+                        controls.target.set(width * tileSize / 2, 0, height * tileSize / 2);
+                        controls.maxDistance = Math.max(50, Math.max(width, height) * 2);
+                        renderer.setSize(is3DView ? window.innerWidth : window.innerWidth - 320, window.innerHeight);
+                        lastClickedTile = null;
+                        isDragging = false;
+                        loading.style.display = 'none';
+                    }, 50);
+                } else {
+                    console.log("Invalid grid size: Width and height must be between 1 and 100.");
+                }
+            });
+        }
+
+        if (resetGridBtn) {
+            resetGridBtn.addEventListener('click', () => {
+                loading.style.display = 'block';
+                setTimeout(() => {
+                    gridWidthInput.value = 10;
+                    gridHeightInput.value = 10;
+                    width = 10;
+                    height = 10;
+                    floorPlan = initializeFloorPlan(width, height);
+                    updateCanvasSize();
+                    gridSizeDisplay.textContent = `${width}x${height}`;
+                    drawFloorPlan();
+                    update3DModel();
+                    camera.position.set(width * tileSize / 2, 5, height * tileSize + 5);
+                    camera.lookAt(width * tileSize / 2, 0, height * tileSize / 2);
+                    controls.target.set(width * tileSize / 2, 0, height * tileSize / 2);
+                    controls.maxDistance = Math.max(50, Math.max(width, height) * 2);
+                    renderer.setSize(is3DView ? window.innerWidth : window.innerWidth - 320, window.innerHeight);
+                    lastClickedTile = null;
+                    isDragging = false;
+                    validateInputs();
+                    loading.style.display = 'none';
+                }, 50);
+            });
+        }
+
+        // Initialize floor plan
+        function initializeFloorPlan(w, h) {
+            const newFloorPlan = [];
+            for (let y = 0; y < h; y++) {
+                let tiles = '';
+                const orientations = Array(w).fill(0);
+                for (let x = 0; x < w; x++) {
+                    if ((x === 0 && y === 0) || (x === w-1 && y === 0) || (x === 0 && y === h-1) || (x === w-1 && y === h-1)) {
+                        tiles += 'c';
+                    } else if (x === 0 || x === w-1 || y === 0 || y === h-1) {
+                        tiles += '#';
+                    } else {
+                        tiles += ' ';
+                    }
+                }
+                newFloorPlan.push({ tiles, orientations });
+            }
+            if (w >= 10 && h >= 10) {
+                newFloorPlan[3].tiles = newFloorPlan[3].tiles.substring(0, 4) + 'w' + newFloorPlan[3].tiles.substring(5);
+                newFloorPlan[3].tiles = newFloorPlan[3].tiles.substring(0, 8) + 'd' + newFloorPlan[3].tiles.substring(9);
+                newFloorPlan[7].tiles = newFloorPlan[7].tiles.substring(0, 4) + 'w' + newFloorPlan[7].tiles.substring(5);
+                newFloorPlan[7].tiles = newFloorPlan[7].tiles.substring(0, 8) + 'd' + newFloorPlan[7].tiles.substring(9);
+                for (let x = 2; x < w-2; x += 2) {
+                    newFloorPlan[5].tiles = newFloorPlan[5].tiles.substring(0, x) + 'd' + newFloorPlan[5].tiles.substring(x+1);
+                }
+            }
+            return newFloorPlan;
+        }
+
+        // Draw 2D floor plan
+        function drawFloorPlan(hoverTile = null) {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const tile = floorPlan[y].tiles[x];
+                    ctx.fillStyle = tile === '#' ? '#1f2937' : tile === 'd' ? '#8B4513' : tile === 'w' ? '#00B7EB' : tile === 'c' ? '#FFFF00' : '#f3f4f6';
+                    ctx.fillRect(x * tilePixelSize, y * tilePixelSize, tilePixelSize, tilePixelSize);
+                    ctx.strokeStyle = '#d1d5db';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x * tilePixelSize, y * tilePixelSize, tilePixelSize, tilePixelSize);
+                    if (tile === '#') {
+                        ctx.save();
+                        ctx.translate(x * tilePixelSize + tilePixelSize / 2, y * tilePixelSize + tilePixelSize / 2);
+                        ctx.rotate((floorPlan[y].orientations[x] * Math.PI) / 180);
+                        ctx.fillStyle = '#ef4444';
+                        ctx.beginPath();
+                        ctx.moveTo(0, -tilePixelSize / 3);
+                        ctx.lineTo(-tilePixelSize / 6, tilePixelSize / 3);
+                        ctx.lineTo(tilePixelSize / 6, tilePixelSize / 3);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                    if (lastClickedTile && lastClickedTile.x === x && lastClickedTile.y === y) {
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(x * tilePixelSize, y * tilePixelSize, tilePixelSize, tilePixelSize);
+                    }
+                }
+            }
+            if (hoverTile) {
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.fillRect(hoverTile.x * tilePixelSize, hoverTile.y * tilePixelSize, tilePixelSize, tilePixelSize);
+                ctx.strokeRect(hoverTile.x * tilePixelSize, hoverTile.y * tilePixelSize, tilePixelSize, tilePixelSize);
+            }
+        }
+
+        // Check if a tile is a corner
+        function isCorner(x, y) {
+            let wallCount = 0;
+            if (x > 0 && floorPlan[y].tiles[x-1] === '#') wallCount++;
+            if (x < width - 1 && floorPlan[y].tiles[x+1] === '#') wallCount++;
+            if (y > 0 && floorPlan[y-1].tiles[x] === '#') wallCount++;
+            if (y < height - 1 && floorPlan[y+1].tiles[x] === '#') wallCount++;
+            return wallCount >= 2;
+        }
+
+        // Handle tile placement
+        function placeTile(x, y) {
+            if (x < 0 || x >= width || y < 0 || y >= height) return;
+            if (isDirectionMode) {
+                if (floorPlan[y].tiles[x] === '#') {
+                    floorPlan[y].orientations[x] = selectedOrientation;
+                }
+            } else {
+                if (selectedTile === 'c' && !isCorner(x, y)) {
+                    console.log("Cannot place cube: Not a corner (needs at least two adjacent walls).");
+                    return;
+                }
+                floorPlan[y].tiles = floorPlan[y].tiles.substring(0, x) + selectedTile + floorPlan[y].tiles.substring(x + 1);
+                floorPlan[y].orientations[x] = selectedTile === '#' ? selectedOrientation : 0;
+            }
+            lastClickedTile = { x, y };
+            drawFloorPlan({ x, y });
+        }
+
+        // Mouse and touch events
+        if (canvas) {
+            canvas.addEventListener('mousedown', (event) => {
+                isDragging = true;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.floor((event.clientX - rect.left) * scaleX / tilePixelSize);
+                const y = Math.floor((event.clientY - rect.top) * scaleY / tilePixelSize);
+                placeTile(x, y);
+            });
+
+            canvas.addEventListener('mousemove', (event) => {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.floor((event.clientX - rect.left) * scaleX / tilePixelSize);
+                const y = Math.floor((event.clientY - rect.top) * scaleY / tilePixelSize);
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    drawFloorPlan({ x, y });
+                    if (isDragging) {
+                        placeTile(x, y);
+                    }
+                } else {
+                    drawFloorPlan();
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    update3DModel();
+                }
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                isDragging = false;
+                drawFloorPlan();
+                update3DModel();
+            });
+
+            canvas.addEventListener('touchstart', (event) => {
+                event.preventDefault();
+                isDragging = true;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const touch = event.touches[0];
+                const x = Math.floor((touch.clientX - rect.left) * scaleX / tilePixelSize);
+                const y = Math.floor((touch.clientY - rect.top) * scaleY / tilePixelSize);
+                placeTile(x, y);
+            });
+
+            canvas.addEventListener('touchmove', (event) => {
+                event.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const touch = event.touches[0];
+                const x = Math.floor((touch.clientX - rect.left) * scaleX / tilePixelSize);
+                const y = Math.floor((touch.clientY - rect.top) * scaleY / tilePixelSize);
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    drawFloorPlan({ x, y });
+                    if (isDragging) {
+                        placeTile(x, y);
+                    }
+                } else {
+                    drawFloorPlan();
+                }
+            });
+
+            canvas.addEventListener('touchend', () => {
+                isDragging = false;
+                drawFloorPlan();
+                update3DModel();
+            });
+        }
+
+        // 3D model update
+        let meshes = [];
+        function update3DModel() {
+            meshes.forEach(mesh => scene.remove(mesh));
+            meshes = [];
+
+            // Add floor with exact grid size
+            const floorGeometry = new THREE.PlaneGeometry(width * tileSize, height * tileSize);
+            const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.position.set(width * tileSize / 2, 0, height * tileSize / 2);
+            scene.add(floorMesh);
+            meshes.push(floorMesh);
+
+            // Process each tile
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const tile = floorPlan[y].tiles[x];
+                    const orientation = floorPlan[y].orientations[x];
+                    const posX = x * tileSize;
+                    const posZ = y * tileSize;
+
+                    if (tile === '#') {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterials[orientation]);
+                        wall.position.set(posX + tileSize / 2, wallHeight / 2, posZ + tileSize / 2);
+                        wall.rotation.y = (orientation * Math.PI) / 180;
+                        scene.add(wall);
+                        meshes.push(wall);
+                    } else if (tile === 'd') {
+                        const door = new THREE.Mesh(doorGeometry, doorMaterial);
+                        door.position.set(posX + tileSize / 2, doorHeight / 2, posZ + tileSize / 2);
+                        scene.add(door);
+                        meshes.push(door);
+                    } else if (tile === 'w') {
+                        const window = new THREE.Mesh(windowGeometry, windowMaterial);
+                        window.position.set(posX + tileSize / 2, windowOffset + windowHeight / 2, posZ + tileSize / 2);
+                        scene.add(window);
+                        meshes.push(window);
+                    } else if (tile === 'c') {
+                        const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+                        cube.position.set(posX + tileSize / 2, wallHeight / 2, posZ + tileSize / 2);
+                        scene.add(cube);
+                        meshes.push(cube);
+                    }
+                }
+            }
+        }
+
+        // Initial setup
+        updateCanvasSize();
+        drawFloorPlan();
+        update3DModel();
+        validateInputs();
+
+        // Set initial camera position
+        camera.position.set(width * tileSize / 2, Math.max(5, Math.max(width, height)), height * tileSize + Math.max(5, Math.max(width, height)));
+        camera.lookAt(width * tileSize / 2, 0, height * tileSize / 2);
+        controls.target.set(width * tileSize / 2, 0, height * tileSize / 2);
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            if (moveForward) controls.target.z -= moveSpeed;
+            if (moveBackward) controls.target.z += moveSpeed;
+            if (moveLeft) controls.target.x -= moveSpeed;
+            if (moveRight) controls.target.x += moveSpeed;
+            if (zoomIn) camera.position.multiplyScalar(1 - zoomSpeed * 0.1);
+            if (zoomOut) camera.position.multiplyScalar(1 + zoomSpeed * 0.1);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = (is3DView ? window.innerWidth : window.innerWidth - 320) / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(is3DView ? window.innerWidth : window.innerWidth - 320, window.innerHeight);
+            updateCanvasSize();
+        });
+    </script>
+</body>
+</html>
